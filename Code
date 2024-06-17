@@ -1,0 +1,114 @@
+library(tidyverse)
+library(caret)
+library(randomForest)
+library(nnet)
+
+data <- read.csv("/Users/kamala/Desktop/New_York_City_Leading_Causes_of_Death_20240425.csv")
+
+# Data Preprocessing
+data$Sex <- as.factor(data$Sex)
+data$Race.Ethnicity <- as.factor(data$Race.Ethnicity)
+data$Leading.Cause <- as.factor(data$Leading.Cause)
+
+# Convert character variables to numeric
+data$Deaths <- as.numeric(data$Deaths)
+data$Death.Rate <- as.numeric(data$Death.Rate)
+data$Age.Adjusted.Death.Rate <- as.numeric(data$Age.Adjusted.Death.Rate)
+
+# Remove rows with missing values
+data <- na.omit(data)
+
+# Remove factor levels with no data in either training or testing set
+factor_levels <- levels(data$Leading.Cause)
+valid_levels <- factor_levels[sapply(factor_levels, function(x) sum(data$Leading.Cause == x)) > 1]
+data <- data[data$Leading.Cause %in% valid_levels,]
+data$Leading.Cause <- factor(data$Leading.Cause)  # Reset factor levels
+
+# Split the data into training and testing sets
+set.seed(123)
+trainIndex <- createDataPartition(data$Leading.Cause, p = .8, 
+                                  list = FALSE, 
+                                  times = 1)
+dataTrain <- data[trainIndex,]
+dataTest <- data[-trainIndex,]
+
+# Logistic Regression Model
+log_model <- train(Leading.Cause ~ ., data = dataTrain, method = "multinom", 
+                   trControl = trainControl(method = "cv", number = 10))
+log_pred <- predict(log_model, dataTest)
+log_accuracy <- confusionMatrix(log_pred, dataTest$Leading.Cause)$overall['Accuracy']
+
+# Random Forest Model
+rf_model <- randomForest(Leading.Cause ~ ., data = dataTrain, importance = TRUE)
+rf_pred <- predict(rf_model, dataTest)
+rf_accuracy <- confusionMatrix(rf_pred, dataTest$Leading.Cause)$overall['Accuracy']
+
+# Output the model accuracies
+print(log_accuracy)
+print(rf_accuracy)
+
+# Plot Feature Importance
+ggplot(importance_df, aes(x = reorder(Feature, Importance), y = Importance)) +
+  geom_bar(stat = "identity") +
+  coord_flip() +
+  theme_minimal() +
+  labs(title = "Feature Importance in Random Forest Model",
+       x = "Features",
+       y = "Importance")
+
+
+# Interaction Plot between Age Adjusted Death Rate and Death Rate
+ggplot(data, aes(x = Age.Adjusted.Death.Rate, y = Death.Rate, color = Leading.Cause)) +
+  geom_point(alpha = 0.7) +
+  theme_minimal() +
+  labs(title = "Interaction between Age Adjusted Death Rate and Death Rate",
+       x = "Age Adjusted Death Rate",
+       y = "Death Rate")
+
+# Interaction Plot by Sex
+ggplot(data, aes(x = Age.Adjusted.Death.Rate, y = Death.Rate, color = Leading.Cause)) +
+  geom_point(alpha = 0.7) +
+  facet_wrap(~Sex) +
+  theme_minimal() +
+  labs(title = "Interaction between Age Adjusted Death Rate and Death Rate by Sex",
+       x = "Age Adjusted Death Rate",
+       y = "Death Rate")
+
+# Select relevant features for clustering
+clustering_data <- data %>% select(Age.Adjusted.Death.Rate, Death.Rate, Deaths)
+
+# Normalize the data
+clustering_data <- scale(clustering_data)
+
+# K-means Clustering
+set.seed(123)
+kmeans_result <- kmeans(clustering_data, centers = 3, nstart = 25)
+
+# Visualize K-means Clusters
+fviz_cluster(kmeans_result, data = clustering_data, geom = "point",
+             ellipse.type = "convex", ggtheme = theme_minimal(),
+             main = "K-means Clustering of Leading Causes of Death")
+
+# Hierarchical Clustering
+dissimilarity_matrix <- dist(clustering_data)
+
+# Hierarchical clustering using complete linkage
+hc_result <- hclust(dissimilarity_matrix, method = "complete")
+
+# Plot the dendrogram
+fviz_dend(hc_result, k = 3, 
+          cex = 0.5, 
+          color_labels_by_k = TRUE, 
+          rect = TRUE, 
+          rect_fill = TRUE,
+          main = "Hierarchical Clustering Dendrogram")
+
+# Add cluster membership to the original data
+data$KMeansCluster <- as.factor(kmeans_result$cluster)
+data$HierarchicalCluster <- as.factor(cutree(hc_result, k = 3))
+
+kmeans_clusters <- table(data$KMeansCluster)
+hierarchical_clusters <- table(data$HierarchicalCluster)
+
+kmeans_clusters
+hierarchical_clusters
